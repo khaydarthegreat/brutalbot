@@ -3,7 +3,7 @@ from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandle
 from cashier import invoice, handle_payment, go_back, handle_screenshot, approve_invoice, decline_invoice, do_nothing
 from reports import reports, sales_book_report, clients_book_report, input_date, generate_sales_report, generate_clients_report, set_today, set_yesterday, set_this_month, set_this_week,  set_30_days, set_custom_period, START, INPUT_DATE, GENERATE_SALES_BOOK_REPORT, GENERATE_CLIENTS_BOOK_REPORT
 from settings import conv_handler_payments
-from config import PAYMENT_MANAGERS, SALES_MANAGERS, ANALYTICS, BOT_TOKEN, MANAGER_URL get_card_number, set_card_number
+from config import PAYMENT_MANAGERS, SALES_MANAGERS, ANALYTICS, BOT_TOKEN, MANAGER_URL, get_card_number, set_card_number
 import re
 import traceback
 import uuid
