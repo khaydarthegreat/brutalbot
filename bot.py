@@ -28,16 +28,16 @@ def get_payment_message(amount):
     card_number, bank = database.get_current_card_and_bank()
     
     return f"""
-    🧾 Счет на сумму {amount} рублей.  
+    🧾 Новый счет. К оплате: {amount} рублей.  
 
-Способ оплаты: перевод на карту банка РФ
+Для оплаты, переведите деньги на карту банка РФ
 
-Реквизиты для перевода:
+👉🏻 Реквизиты карты:
 {bank} {card_number}
 
-После оплаты, пожалуйста нажмите кнопку "✅ Я оплатил" 
+Перевели деньги? Нажмите на кнопку Я оплатил внизу 👇 
 
-Если у вас возникли трудности, напишите нашему менеджеру нажав на кнопку 👨🏻‍💼 Менеджер. """
+Если не получилось или есть вопросы, нажми на кнопку 👨🏻‍💼 Помощь. """
 
 
 
@@ -100,7 +100,7 @@ def start(update: Update, context: CallbackContext) -> None:
 
         # Creating InlineKeyboardMarkup
         keyboard = [[InlineKeyboardButton("✅ Я оплатил", callback_data='i_paid'),
-                     InlineKeyboardButton("👨‍💼 Менеджер", url=MANAGER_URL)]]  # Replace with the actual username of the sales manager
+                     InlineKeyboardButton("👨‍💼 Помощь", url=MANAGER_URL)]]  # Replace with the actual username of the sales manager
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
