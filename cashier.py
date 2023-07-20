@@ -36,7 +36,7 @@ def invoice(update: Update, context: CallbackContext) -> None:
         # Log the extracted amount and product
         logger.info(f'Creating invoice for amount: {amount}, product: {product}')
 
-        pay_url = f"https://t.me/sitbetbot?start=amount_{amount}_product_{product}"
+        pay_url = f"{config.BOT_URL}?start=amount_{amount}_product_{product}"
 
         results.append(InlineQueryResultArticle(
             id=str(uuid.uuid4()),  # Generate a random ID for this result
