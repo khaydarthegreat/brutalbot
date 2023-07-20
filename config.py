@@ -6,6 +6,7 @@ ANALYTICS = [56424449]  # Add your analytics group's user IDs here
 
 BOT_TOKEN = "5465597754:AAEwaLJQzakjS2hngumx-On-5DfRpItPHuU"
 MANAGER_URL = "https://t.me/stavki_tochka1"
+BOT_URL = "https://t.me/sitbetbot"
 
 
 
