@@ -94,7 +94,7 @@ def go_back(update: Update, context: CallbackContext) -> None:
 Если у вас возникли трудности, напишите нашему менеджеру нажав на кнопку 👨🏻‍💼 Менеджер. """,
                             reply_markup=InlineKeyboardMarkup([
                                 [InlineKeyboardButton("✅ Я оплатил", callback_data='i_paid'),
-                                 InlineKeyboardButton("👨🏻‍💼 Менеджер", url='https://t.me/stavki_tochka1')]
+                                 InlineKeyboardButton("👨‍💼 Менеджер", url=config.MANAGER_URL)]
                             ]))
 
 
@@ -206,7 +206,7 @@ def approve_invoice(update: Update, context: CallbackContext) -> None:
 Ваш счет на сумму {amount} оплачен. 
 
 Вернитесь в диалог с менеджером, чтобы получить ваш прогноз."""
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("👉 Получить прогноз", url='https://t.me/stavki_tochka1')]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("👉 Получить прогноз", url=config.MANAGER_URL)]])
         context.bot.send_message(chat_id=user_id, text=msg, reply_markup=keyboard)
 
         # Get the screenshot info from the database
@@ -247,7 +247,7 @@ def decline_invoice(update: Update, context: CallbackContext) -> None:
         invoice_details = database.get_invoice_details(invoice_id)
         user_id = invoice_details["user_id"]
         msg = f"🚫 К сожалению, ваш перевод не прошел проверку. Если вы считаете, что произошла ошибка, обратитесь к менеджеру за помощью."
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Обратиться к менеджеру", url='https://t.me/stavki_tochka1')]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Обратиться к менеджеру", url=config.MANAGER_URL)]])
         context.bot.send_message(chat_id=user_id, text=msg, reply_markup=keyboard)
         query.edit_message_text(text=f"Счет {invoice_id} был отклонен.")  # This will update the confirmation message to the decline message
 
