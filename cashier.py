@@ -42,9 +42,9 @@ def invoice(update: Update, context: CallbackContext) -> None:
             id=str(uuid.uuid4()),  # Generate a random ID for this result
             title=f"Создать счет • {amount} рублей",
             description=f"Продукт: {product}",  
-            input_message_content=InputTextMessageContent(f"""🧾 Новый счет на сумму {amount} рублей.
+            input_message_content=InputTextMessageContent(f"""🧾 К оплате: {amount} рублей.
         
-Для оплаты, нажмите кнопку внизу. 👇 """),
+Для того, чтобы оплатить счет жми кнопку внизу. 👇 """),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("💳 Оплатить", url=pay_url)]
             ]),
@@ -82,19 +82,19 @@ def go_back(update: Update, context: CallbackContext) -> None:
     card_number, bank = database.get_current_card_and_bank()
     
     query.edit_message_text(text=f"""
-🧾 Счет на сумму {amount} рублей.  
+🧾 Новый счет. К оплате: {amount} рублей.  
 
-Способ оплаты: перевод на карту банка РФ
+Для оплаты, переведите деньги на карту банка РФ
 
-Реквизиты для перевода:
+👉🏻 Реквизиты карты:
 {bank} {card_number}
 
-После оплаты, пожалуйста нажмите кнопку "✅ Я оплатил" 
+Перевели деньги? Нажмите на кнопку Я оплатил внизу 👇 
 
-Если у вас возникли трудности, напишите нашему менеджеру нажав на кнопку 👨🏻‍💼 Менеджер. """,
+Если не получилось или есть вопросы, нажми на кнопку 👨🏻‍💼 Помощь. """,
                             reply_markup=InlineKeyboardMarkup([
                                 [InlineKeyboardButton("✅ Я оплатил", callback_data='i_paid'),
-                                 InlineKeyboardButton("👨‍💼 Менеджер", url=config.MANAGER_URL)]
+                                 InlineKeyboardButton("👨🏻‍💼 Помощь", url=config.MANAGER_URL)]
                             ]))
 
 
@@ -166,9 +166,9 @@ def handle_screenshot(update: Update, context: CallbackContext) -> None:
 
                 logger.info(f"Sent invoice details to payment manager: id={manager_id}")
 
-            context.bot.send_message(chat_id=update.effective_chat.id, text="""⌛️ Ожидайте, скриншот проходит проверку.  
-
-В течении нескольких минут вы получите уведомление с результатом проверки.""")
+            context.bot.send_message(chat_id=update.effective_chat.id, text=""" Скрин получен. 
+            
+        🔎 Проверяем.""")
 
             logger.info(f"Sent thank you message to user: id={user_id}")
         else:
@@ -201,12 +201,12 @@ def approve_invoice(update: Update, context: CallbackContext) -> None:
         user_id = invoice_details["user_id"]
         amount = invoice_details["amount"]
         name = invoice_details["name"]
-        msg = f""" ✅ Проверка пройдена 
+        msg = f""" Скриншот прошел проверку! 👊🏼 
         
-Ваш счет на сумму {amount} оплачен. 
+Сумма: {amount} рублей. 
 
-Вернитесь в диалог с менеджером, чтобы получить ваш прогноз."""
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("👉 Получить прогноз", url=config.MANAGER_URL)]])
+Для того, чтобы получить свой прогноз жми на кнопку внизу."""
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Забрать прогноз", url=config.MANAGER_URL)]])
         context.bot.send_message(chat_id=user_id, text=msg, reply_markup=keyboard)
 
         # Get the screenshot info from the database
@@ -246,8 +246,8 @@ def decline_invoice(update: Update, context: CallbackContext) -> None:
         database.update_invoice_status(invoice_id, 'DECLINED')
         invoice_details = database.get_invoice_details(invoice_id)
         user_id = invoice_details["user_id"]
-        msg = f"🚫 К сожалению, ваш перевод не прошел проверку. Если вы считаете, что произошла ошибка, обратитесь к менеджеру за помощью."
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Обратиться к менеджеру", url=config.MANAGER_URL)]])
+        msg = f"🚫 Бро, что-то пошло не так. Скриншот не прошел проверку. Если ты думаешь, что произошла ошибка, напиши нам."
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Произошла ошибка", url=config.MANAGER_URL)]])
         context.bot.send_message(chat_id=user_id, text=msg, reply_markup=keyboard)
         query.edit_message_text(text=f"Счет {invoice_id} был отклонен.")  # This will update the confirmation message to the decline message
 
