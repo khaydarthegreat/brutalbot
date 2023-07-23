@@ -38,14 +38,14 @@ def get_payment_message(amount):
 
 Перевели деньги? Нажмите на кнопку Я оплатил внизу 👇 
 
-Если не получилось или есть вопросы, нажми на кнопку 👨🏻‍💼 Помощь. """
+Если не получилось или есть вопросы, нажми на кнопку 👨🏻 Помощь. """
 
 
 
 def start(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
-    name = user.first_name + " " + user.last_name if user.last_name else user.first_name
-    username = user.username if user.username else 'null'
+    name = f"{user.first_name} {user.last_name}" if user.last_name else user.first_name
+    username = user.username or None
     user_id = user.id
 
     # Log user details
@@ -55,63 +55,82 @@ def start(update: Update, context: CallbackContext) -> None:
     message_text = update.message.text  # It should be in the format "/start amount_amount_product_product"
     start_data = message_text.split()[1].split('_') if len(message_text.split()) > 1 else None
 
+    expected_data_len = 4
     if user_id in PAYMENT_MANAGERS or user_id in SALES_MANAGERS or user_id in ANALYTICS:
-        # Create the main menu keyboard markup
-        reply_markup = ReplyKeyboardMarkup(main_menu_options, resize_keyboard=True)
-
-        # Send the menu to the user
-        update.message.reply_text('Выберите действие:', reply_markup=reply_markup)
+        handle_manager_start_command(update)
     
-    elif start_data and len(start_data) == 4 and start_data[0] == 'amount' and start_data[2] == 'product':
-        amount = int(start_data[1])
-        product = start_data[3]
+    elif start_data and len(start_data) == expected_data_len and start_data[0] == 'amount' and start_data[2] == 'product':
+        handle_payment_start_command(start_data, user_id, name, username, update, context)
 
-        # Log parsed amount and product
-        logger.info(f'Parsed amount={amount} and product={product} from message text: {message_text}')
-
-        invoice_id = int(database.get_latest_invoice_id()) + 1
-        while database.check_invoice_id(invoice_id):
-            invoice_id += 1
-
-        # Log created invoice_id
-        logger.info(f'Generated unique invoice_id={invoice_id} for user_id={user_id}')
-
-        # Store new invoice in the db
-        database.add_invoice(invoice_id, amount, product, user_id, name)
-
-        # Saving invoice_id in context.chat_data
-        context.chat_data['invoice_id'] = invoice_id
-
-        # Add the customer details to the database
-        database.update_customer_details(invoice_id, name, username, user_id)
-
-        # Update the Date column in the invoice
-        database.update_invoice_date(invoice_id)
-
-        # Log success of database operations
-        logger.info(f'Added new invoice and updated customer details in database for invoice_id={invoice_id}, user_id={user_id}')
-
-        # Now we're ready to send the payment message
-        payment_message = get_payment_message(amount)
-        card_number = database.get_current_card_and_bank()
-
-        # Store the amount and card number as context attributes
-        context.chat_data['amount'] = amount
-        context.chat_data['_CARD_NUMBER'] = card_number
-
-        # Creating InlineKeyboardMarkup
-        keyboard = [[InlineKeyboardButton("✅ Я оплатил", callback_data='i_paid'),
-                     InlineKeyboardButton("👨‍💼 Помощь", url=MANAGER_URL)]]  # Replace with the actual username of the sales manager
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        # Send the message with InlineKeyboardMarkup
-        update.message.reply_text(payment_message, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-        # Log sent payment message
-        logger.info(f'Sent payment message to user_id={user_id} with invoice_id={invoice_id}, amount={amount}, product={product}')
     else:
         update.message.reply_text('Hi!')
+
+
+
+def handle_manager_start_command(update: Update):
+    # Create the main menu keyboard markup
+    reply_markup = ReplyKeyboardMarkup(main_menu_options, resize_keyboard=True)
+
+    # Send the menu to the user
+    update.message.reply_text('👉🏻 Выберите действие:', reply_markup=reply_markup)
+
+
+def handle_payment_start_command(start_data, user_id, name, username, update, context):
+
+    amount = int(start_data[1])
+    product = start_data[3]
+    current_salesman = database.get_current_salesman()
+
+    # Log parsed amount and product
+    logger.info(f'Parsed amount={amount} and product={product}')
+
+    invoice_id = generate_invoice_id()
+
+    # Store new invoice in the db
+    database.add_invoice(invoice_id, amount, product, user_id, name, current_salesman)
+
+    # Saving invoice_id in context.chat_data
+    context.chat_data['invoice_id'] = invoice_id
+
+    # Add the customer details to the database
+    database.update_customer_details(invoice_id, name, username, user_id)
+
+    # Update the Date column in the invoice
+    database.update_invoice_date(invoice_id)
+
+    # Log success of database operations
+    logger.info(f'Added new invoice and updated customer details in database for invoice_id={invoice_id}, user_id={user_id}')
+
+    # Now we're ready to send the payment message
+    payment_message = get_payment_message(amount)
+    card_number = database.get_current_card_and_bank()
+
+    # Store the amount and card number as context attributes
+    context.chat_data['amount'] = amount
+    context.chat_data['_CARD_NUMBER'] = card_number
+
+    # Creating InlineKeyboardMarkup
+    keyboard = [[InlineKeyboardButton("✅ Я оплатил", callback_data='i_paid'),
+                 InlineKeyboardButton("👨🏻 Помощь", url=MANAGER_URL)]]  # Replace with the actual username of the sales manager
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Send the message with InlineKeyboardMarkup
+    update.message.reply_text(payment_message, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+
+    # Log sent payment message
+    logger.info(f'Sent payment message to user_id={user_id} with invoice_id={invoice_id}, amount={amount}, product={product}')
+
+
+def generate_invoice_id():
+    invoice_id = int(database.get_latest_invoice_id()) + 1
+    while database.check_invoice_id(invoice_id):
+        invoice_id += 1
+
+    # Log created invoice_id
+    logger.info(f'Generated unique invoice_id={invoice_id}')
+
+    return invoice_id
 
 
 def cancel(update: Update, context: CallbackContext) -> int:
