@@ -24,13 +24,18 @@ def create_connection():
 
     return conn
 
-
 def close_connection(conn):
     conn.close()
 
 def create_table():
     conn = create_connection()
     cur = conn.cursor()
+
+    # Create salesman table
+    cur.execute(sql.SQL("""CREATE TABLE IF NOT EXISTS salesman (
+                        id SERIAL PRIMARY KEY, 
+                        name TEXT NOT NULL,
+                        is_current BOOLEAN DEFAULT FALSE)"""))
 
     # Create invoices table
     cur.execute(sql.SQL("""CREATE TABLE IF NOT EXISTS invoices (
@@ -41,8 +46,10 @@ def create_table():
                         user_id BIGINT, 
                         product TEXT, 
                         status TEXT, 
+                        type TEXT,
                         date TIMESTAMPTZ, 
-                        screenshot_id INTEGER)"""))
+                        screenshot_id INTEGER, 
+                        salesman TEXT)""")) 
 
     # Create cards table
     cur.execute(sql.SQL("""
@@ -59,14 +66,12 @@ def create_table():
     close_connection(conn)
 
 
-
-
-def add_invoice(invoice_id, amount, product, user_id, name):
+def add_invoice(invoice_id, amount, product, user_id, name, current_salesman):
     conn = create_connection()
     cur = conn.cursor()
 
-    cur.execute(sql.SQL("INSERT INTO invoices (invoice_id, amount, product, user_id, name) VALUES (%s, %s, %s, %s, %s)"), 
-                (invoice_id, amount, product, user_id, name))
+    cur.execute(sql.SQL("INSERT INTO invoices (invoice_id, amount, product, user_id, name, salesman) VALUES (%s, %s, %s, %s, %s, %s)"), 
+                (invoice_id, amount, product, user_id, name, current_salesman))
 
     conn.commit()
     close_connection(conn)
@@ -249,7 +254,7 @@ def generate_sales_book_report(start_date, end_date):
     cur = conn.cursor()
 
     query = sql.SQL("""
-        SELECT invoice_id, amount, date, name, username, user_id
+        SELECT invoice_id, amount, date, name, username, user_id, type
         FROM invoices
         WHERE status = 'PAID'
         AND date BETWEEN %s AND %s
@@ -270,10 +275,10 @@ def generate_sales_book_report(start_date, end_date):
         formatted_report = []
 
         for row in result_set:
-            invoice_id, amount, date, name, username, user_id = row
+            invoice_id, amount, date, name, username, user_id, type = row
             # Convert the date to your desired format.
             formatted_date = date.strftime("%Y-%m-%d %H:%M")
-            formatted_report.append([invoice_id, amount, formatted_date, name, username, user_id])
+            formatted_report.append([invoice_id, amount, formatted_date, name, username, user_id, type])
 
         return formatted_report
     else:
@@ -540,4 +545,123 @@ def delete_card(card_number):
     conn.commit()
     close_connection(conn)
 
-        
+
+def update_invoice_type(invoice_id, type):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    cur.execute(sql.SQL("UPDATE invoices SET type = %s WHERE invoice_id = %s"), (type, invoice_id))
+
+    conn.commit()
+    close_connection(conn)
+
+           
+
+def get_incoming_deal_quantity(start_date, end_date):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM invoices WHERE status = 'PAID' AND type = 'Incoming' AND date BETWEEN %s AND %s", (start_date, end_date))
+    incoming_deal_quantity = cur.fetchone()[0]
+
+    close_connection(conn)
+    
+    return incoming_deal_quantity
+
+def get_outgoing_deal_quantity(start_date, end_date):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM invoices WHERE status = 'PAID' AND type = 'Outgoing' AND date BETWEEN %s AND %s", (start_date, end_date))
+    outgoing_deal_quantity = cur.fetchone()[0]
+
+    close_connection(conn)
+    
+    return outgoing_deal_quantity
+
+
+def get_total_amount_incoming(start_date, end_date):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT SUM(amount) FROM invoices WHERE status = 'PAID' AND type = 'Incoming' AND date BETWEEN %s AND %s", (start_date, end_date))
+    total_amount_incoming = cur.fetchone()[0]
+
+    close_connection(conn)
+    
+    return total_amount_incoming if total_amount_incoming else 0
+
+def get_total_amount_outgoing(start_date, end_date):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT SUM(amount) FROM invoices WHERE status = 'PAID' AND type = 'Outgoing' AND date BETWEEN %s AND %s", (start_date, end_date))
+    total_amount_outgoing = cur.fetchone()[0]
+
+    close_connection(conn)
+    
+    return total_amount_outgoing if total_amount_outgoing else 0
+
+    
+def get_average_deal_amount(start_date, end_date):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT AVG(amount) FROM invoices WHERE status = 'PAID' AND date BETWEEN %s AND %s", (start_date, end_date))
+    average_deal_amount = cur.fetchone()[0]
+
+    close_connection(conn)
+    
+    return round(average_deal_amount, 2) if average_deal_amount else 0
+
+def add_salesman(name):
+    conn = create_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO salesman (name) VALUES (%s)", (name,))
+    conn.commit()
+    close_connection(conn)
+
+def get_current_salesman():
+    conn = create_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM salesman WHERE is_current = TRUE")
+    current_salesman = cur.fetchone()
+    close_connection(conn)
+    return current_salesman
+
+def set_current_salesman(name):
+    conn = create_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE salesman SET is_current = FALSE WHERE is_current = TRUE")
+    cur.execute("UPDATE salesman SET is_current = TRUE WHERE name = %s", (name,))
+    conn.commit()
+    close_connection(conn)
+
+def get_all_salesmen():
+    conn = create_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM salesman")
+    salesmen_tuples = cur.fetchall()
+    salesmen = [s[0] for s in salesmen_tuples]  # Extract names from tuples
+    close_connection(conn)
+    return salesmen
+
+
+def set_invoice_salesman(invoice_id, salesman_name):
+    conn = create_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE invoices SET salesman = %s WHERE invoice_id = %s", (salesman_name, invoice_id,))
+    conn.commit()
+    close_connection(conn)
+
+def delete_salesman(salesman_name):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    # Delete the salesman from the table
+    cur.execute(sql.SQL("DELETE FROM salesman WHERE name = %s"), (salesman_name,))
+
+    # Save (commit) the changes and close the connection
+    conn.commit()
+    close_connection(conn)
+
