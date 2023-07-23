@@ -5,6 +5,8 @@ import database
 import re
 
 MANAGE_PAYMENTS, CHOOSE_EDIT, ADD_CARD_NUMBER, ADD_CARD_BANK, CONFIRM_ADD_CARD, DELETE_CARD, CONFIRM_DELETE_CARD = range(2, 9)
+MANAGE_SALESMAN, CHOOSE_EDIT_SALESMAN, ADD_SALESMAN, CONFIRM_ADD_SALESMAN, DELETE_SALESMAN = range(10, 15)
+
 
 
 def manage_payments(update: Update, context: CallbackContext):
@@ -20,10 +22,11 @@ def manage_payments(update: Update, context: CallbackContext):
         current_card, current_bank = database.get_current_card_and_bank()
 
         update.message.reply_text(
-            f"""Меню управления картами для платежей. 
+            f"""🎛️ Меню управления картами для платежей. 
             
 ▶️ Активная карта:  {current_bank} {current_card} 
-           
+
+            
 👉🏻 Если вы хотите изменить активную карту, выберите карту из списка.
 
 📝 Если вы хотите добавить или удалить карту, нажмите Редактировать карты    
@@ -203,5 +206,120 @@ conv_handler_payments = ConversationHandler(
 )
 
 
+def manage_salesman(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    if user_id in config.SALES_MANAGERS:  # assuming that you have SALES_MANAGERS defined in your config
+        salesmen = database.get_all_salesmen()
 
+        buttons = [[InlineKeyboardButton(salesman, callback_data=f"choose_{salesman}")] for salesman in salesmen]
+        current_salesman = database.get_current_salesman()
+
+        update.message.reply_text(
+            f"""▶️ Текущая смена: {current_salesman} 
+
+👉🏻 Если вы хотите поменять продажника на смену, выберите из списка продажников.
+
+📝 Если вы хотите изменить список продажников, нажмите кнопку Изменить список продажников;
+""",
+            reply_markup=InlineKeyboardMarkup(buttons + [[InlineKeyboardButton('📝 Изменить список продажников', callback_data='edit_salesmen')]])
+        )
+    else:
+        update.message.reply_text("❌ You don't have the necessary permissions.")
+    return MANAGE_SALESMAN
+
+def edit_salesman(update: Update, context: CallbackContext):
+    query = update.callback_query
+    salesman_name = query.data.split("_")[1]
+    
+    # Set the selected salesman as the current active salesman in the database
+    database.set_current_salesman(salesman_name)
+
+    query.answer()
+    query.edit_message_text(f'✅ Текущий продажник был изменен на : {salesman_name}')
+    return ConversationHandler.END
+
+
+def choose_edit_salesman(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    query.edit_message_text('👉🏻 Выберите действие',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('➕ Добавить продажника', callback_data='add_salesman')],
+            [InlineKeyboardButton('🗑️ Удалить продажника', callback_data='delete_salesman')]
+        ])
+    )
+    return CHOOSE_EDIT_SALESMAN
+
+def add_salesman(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    query.edit_message_text('📝 Укажите имя продажника:')
+    return ADD_SALESMAN
+
+def confirm_add_salesman(update: Update, context: CallbackContext):
+    context.user_data['salesman'] = update.message.text.strip()
+    update.message.reply_text(
+        f"""Вы хотите добавить нового продажника:
+
+👤 Имя: {context.user_data["salesman"]} 
+
+Сохранить?""", 
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('💾 Да', callback_data='yes_add_salesman')],
+            [InlineKeyboardButton('❌ Нет', callback_data='no_add_salesman')]
+        ])
+    )
+    return CONFIRM_ADD_SALESMAN
+
+def cancel_manage_salesman(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    query.edit_message_text('❌ Изменения не были внесены')
+    return ConversationHandler.END
+
+def confirm_add_salesman_yes(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    database.add_salesman(context.user_data['salesman'])
+    query.edit_message_text(
+        '✅ Продажник был успешно добавлен в список.',
+    )
+    return ConversationHandler.END
+
+def confirm_add_salesman_no(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    query.edit_message_text('❌ Изменения не были внесены.')
+    return ConversationHandler.END
+
+def delete_salesman(update: Update, context: CallbackContext):
+    query = update.callback_query
+    salesman = query.data.split("_")[1]
+    database.delete_salesman(salesman)
+    query.answer()
+    query.edit_message_text(f"🚮 Продажник {salesman} был удален из списка.")
+    return ConversationHandler.END
+
+conv_handler_salesman = ConversationHandler(
+    entry_points=[MessageHandler(Filters.regex('^Manage Salesman$'), manage_salesman)],
+    states={
+        MANAGE_SALESMAN: [
+            CallbackQueryHandler(edit_salesman, pattern='^choose_'),
+            CallbackQueryHandler(choose_edit_salesman, pattern='^edit_salesmen$'),
+            CallbackQueryHandler(cancel_manage_salesman, pattern='^cancel$')
+        ],
+        CHOOSE_EDIT_SALESMAN: [
+            CallbackQueryHandler(add_salesman, pattern='add_salesman'),
+            CallbackQueryHandler(delete_salesman, pattern='^delete_')
+        ],
+        ADD_SALESMAN: [
+            MessageHandler(Filters.text & ~Filters.command, confirm_add_salesman)
+        ],
+        CONFIRM_ADD_SALESMAN: [
+            CallbackQueryHandler(confirm_add_salesman_yes, pattern='^yes_add_salesman$'),
+            CallbackQueryHandler(confirm_add_salesman_no, pattern='^no_add_salesman$')   
+        ],
+    },
+    fallbacks=[CallbackQueryHandler(cancel_manage_salesman)]
+)
 
