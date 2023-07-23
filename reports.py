@@ -26,13 +26,13 @@ tz = timezone('Europe/Moscow')  # Change this to your actual timezone
 def reports(update: Update, context: CallbackContext) -> int:
     # Construct the InlineKeyboardMarkup
     keyboard = [
-        [InlineKeyboardButton("Отчет по продажамt", callback_data='sales_book')],
-        [InlineKeyboardButton("Отчет по клиентам", callback_data='clients_book')],
+        [InlineKeyboardButton("💰 Отчет по продажам", callback_data='sales_book')],
+        [InlineKeyboardButton("👤 Отчет по клиентам", callback_data='clients_book')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Send the message
-    update.message.reply_text("Добро пожаловать в меню отчетов проекта Волк с Уолл-стрит. Выберите тип отчета :", reply_markup=reply_markup)
+    update.message.reply_text("👉🏻 Выберите тип отчета :", reply_markup=reply_markup)
 
     return START
 
@@ -55,7 +55,9 @@ def sales_book_report(update: Update, context: CallbackContext) -> int:
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     query.edit_message_text(
-        text="Вы выбрали отчет по продажам. Пожалуйста, выберите период для отчета или задайте свой период нажав на кнопку Задать свой период",
+        text="""💰 Вы выбрали отчет по продажам. 
+        
+👉🏻 Пожалуйста, выберите период для отчета или задайте свой период нажав на кнопку Задать свой период""",
         reply_markup=reply_markup
     )
     return INPUT_DATE
@@ -79,7 +81,9 @@ def clients_book_report(update: Update, context: CallbackContext) -> None:
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     query.edit_message_text(
-        text="Вы выбрали отчет по клиентам. Пожалуйста, выберите период для отчета или задайте свой период нажав на кнопку Задать свой период.",
+        text="""👤 Вы выбрали отчет по клиентам. 
+        
+👉🏻 Пожалуйста, выберите период для отчета или задайте свой период нажав на кнопку Задать свой период""",
         reply_markup=reply_markup
     )
     return INPUT_DATE
@@ -204,7 +208,12 @@ def input_date(update: Update, context: CallbackContext) -> int:
         end_date = start_date + datetime.timedelta(days=1, seconds=-1)
     else:
         logger.info('date format does not match')
-        update.message.reply_text('Неправильный формат. Пожалуйста, введите дату в следующем формате: ДД.ММ.ГГГГ (отчет за один день) или ДД.ММ.ГГГГ - ДД.ММ.ГГГГ (отчет за период)')
+        update.message.reply_text("""❌ Неправильный формат. 
+        
+Пожалуйста, введите дату в следующем формате: 
+
+ДД.ММ.ГГГГ (отчет за один день) 
+ДД.ММ.ГГГГ - ДД.ММ.ГГГГ (отчет за период)""")
         return INPUT_DATE
 
     # Add timezone information
@@ -234,15 +243,26 @@ def calculate_report_stats(start_date, end_date):
     unique_customers = database.get_unique_customers(start_date, end_date)
     new_customers = database.get_new_customers(start_date, end_date)
     new_customers_income = database.get_income_from_new_customers(start_date, end_date)
+    incoming_deal_quantity = database.get_incoming_deal_quantity(start_date, end_date)
+    outgoing_deal_quantity = database.get_outgoing_deal_quantity(start_date, end_date)
+    total_amount_incoming = database.get_total_amount_incoming(start_date, end_date)
+    total_amount_outgoing = database.get_total_amount_outgoing(start_date, end_date)
+    average_deal_amount = database.get_average_deal_amount(start_date, end_date)
 
     return {
         "total_income": total_income,
         "deal_quantity": deal_quantity,
         "unique_customers": unique_customers,
         "new_customers": new_customers,
-        "new_customers_income": new_customers_income
+        "new_customers_income": new_customers_income,
+        "incoming_deal_quantity": incoming_deal_quantity,
+        "outgoing_deal_quantity": outgoing_deal_quantity,
+        "total_amount_incoming": total_amount_incoming,
+        "total_amount_outgoing": total_amount_outgoing,
+        "average_deal_amount": average_deal_amount
     }
-    
+
+
 
 def generate_sales_report(update, context):
     # Ensure dates have been set in user_data.
@@ -264,9 +284,15 @@ def generate_sales_report(update, context):
         
 💰 Доход за период: {stats['total_income']} рублей
 🔢 Количество сделок: {stats['deal_quantity']}
-👤 Уникальных покупателей: {stats['unique_customers']}
+🧾 Средний чек: {stats['average_deal_amount']} рублей
+
+👤 Всего покупателей: {stats['unique_customers']}
 🆕 Новых покупателей: {stats['new_customers']}
-💸 Доход от новых покупателей: {stats['new_customers_income']} рублей"""
+💸 Доход от новых покупателей: {stats['new_customers_income']} рублей
+
+🗄️ Входящих / Исходящих: 📥 {stats['incoming_deal_quantity']} /  📤 {stats['outgoing_deal_quantity']}
+↘️ Сумма входящих: {stats['total_amount_incoming']} рублей
+↗️ Сумма исходящих: {stats['total_amount_outgoing']} рублей"""
 )
 
 
@@ -282,7 +308,7 @@ def generate_sales_report(update, context):
             writer = csv.writer(tmp_file)
 
         # Write the header row
-            header_row = ["Invoice ID", "Amount", "Date", "Name", "Username", "User ID"]
+            header_row = ["Invoice ID", "Amount", "Date", "Name", "Username", "User ID", "In/Out"]
             writer.writerow(header_row)
 
         # Write the data rows
@@ -324,9 +350,15 @@ def generate_clients_report(update, context):
         
 💰 Доход за период: {stats['total_income']} рублей
 🔢 Количество сделок: {stats['deal_quantity']}
-👤 Уникальных покупателей: {stats['unique_customers']}
+🧾 Средний чек: {stats['average_deal_amount']} рублей
+
+👤 Всего покупателей: {stats['unique_customers']}
 🆕 Новых покупателей: {stats['new_customers']}
-💸 Доход от новых покупателей: {stats['new_customers_income']} рублей"""
+💸 Доход от новых покупателей: {stats['new_customers_income']} рублей
+
+🗄️ Входящих / Исходящих: 📥 {stats['incoming_deal_quantity']} /  📤 {stats['outgoing_deal_quantity']}
+↘️ Сумма входящих: {stats['total_amount_incoming']} рублей
+↗️ Сумма исходящих: {stats['total_amount_outgoing']} рублей"""
 )
     
 
