@@ -9,8 +9,6 @@ MANAGER_URL = "https://t.me/BRUTAL_S"
 BOT_URL = "https://t.me/brubetbot"
 
 
-
-
 def get_card_number():
     return database.get_current_card()  # Fetches the current card number from the database
 
