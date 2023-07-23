@@ -32,6 +32,9 @@ def invoice(update: Update, context: CallbackContext) -> None:
 
     results = []
 
+    # Fetch current salesman from the database
+    current_salesman = database.get_current_salesman()
+
     for product in products:
         # Log the extracted amount and product
         logger.info(f'Creating invoice for amount: {amount}, product: {product}')
@@ -41,16 +44,17 @@ def invoice(update: Update, context: CallbackContext) -> None:
         results.append(InlineQueryResultArticle(
             id=str(uuid.uuid4()),  # Generate a random ID for this result
             title=f"Создать счет • {amount} рублей",
-            description=f"Продукт: {product}",  
+            description=f"Продукт: {product} | Продажник: {current_salesman}",  
             input_message_content=InputTextMessageContent(f"""🧾 К оплате: {amount} рублей.
-        
-Для того, чтобы оплатить счет жми кнопку внизу. 👇 """),
+
+Для оплаты, жми кнопку внизу ⬇️ """),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("💳 Оплатить", url=pay_url)]
             ]),
             thumb_url="https://cdn-icons-png.flaticon.com/512/1117/1117142.png",  # Replace this with your actual image URL
         ))
 
+    # Send all results
     context.bot.answer_inline_query(update.inline_query.id, results, cache_time=0)
 
 def handle_payment(update: Update, context: CallbackContext) -> None:
