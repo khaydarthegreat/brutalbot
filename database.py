@@ -1,7 +1,8 @@
 import os
 import psycopg2
 from psycopg2 import sql
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 import pytz
 import logging
 
@@ -15,7 +16,7 @@ DATABASE_URL = os.environ['DATABASE_URL']  # provided by Heroku
 def create_connection():
     conn = psycopg2.connect(DATABASE_URL, sslmode='require')
     cur = conn.cursor()
-    cur.execute("SET TIMEZONE='Europe/Moscow';")  # set this to your preferred timezone
+    cur.execute("SET TIMEZONE='Europe/Moscow';") 
 
     # Fetch and print the current timezone setting
     cur.execute("SHOW timezone;")
@@ -49,7 +50,8 @@ def create_table():
                         type TEXT,
                         date TIMESTAMPTZ, 
                         screenshot_id INTEGER, 
-                        salesman TEXT)""")) 
+                        salesman TEXT,
+                        subscription_length INTEGER)""")) 
 
     # Create cards table
     cur.execute(sql.SQL("""
@@ -61,17 +63,52 @@ def create_table():
         )
     """))
 
+
+    cur.execute(sql.SQL("""
+    CREATE TABLE IF NOT EXISTS vip (
+        name TEXT,
+        username TEXT,
+        user_id BIGINT PRIMARY KEY,
+        duration INTEGER,
+        kick_date TIMESTAMP WITH TIME ZONE,
+        paid BOOLEAN DEFAULT FALSE,
+        renewal_times INTEGER DEFAULT 0
+    );
+    """))
+
+    
     # Save (commit) the changes and close the connection
     conn.commit()
     close_connection(conn)
 
 
-def add_invoice(invoice_id, amount, product, user_id, name, current_salesman):
+def add_invoice(invoice_id, amount, product, user_id, name, username, current_salesman, subscription_length=None):
     conn = create_connection()
+
+    date = datetime.now(pytz.timezone('Europe/Moscow'))
+    
     cur = conn.cursor()
 
-    cur.execute(sql.SQL("INSERT INTO invoices (invoice_id, amount, product, user_id, name, salesman) VALUES (%s, %s, %s, %s, %s, %s)"), 
-                (invoice_id, amount, product, user_id, name, current_salesman))
+    cur.execute(sql.SQL("INSERT INTO invoices (invoice_id, amount, product, user_id, name, username, salesman, date, subscription_length) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"), 
+                (invoice_id, amount, product, user_id, name, username, current_salesman, date, subscription_length))
+
+    conn.commit()
+    close_connection(conn)
+
+
+def add_subscription(name, username, user_id, subscription_length):
+    logger.info(f"add_subscription called with parameters name={name}, username={username}, user_id={user_id}, subscription_length={subscription_length}")
+    conn = create_connection()
+
+    now = datetime.now(pytz.timezone('Europe/Moscow')) 
+    kick_date = now + timedelta(days=int(subscription_length))
+    logger.info(f'Kick date calculated: {kick_date}')
+        
+    cur = conn.cursor()
+
+    cur.execute(sql.SQL("INSERT INTO vip (name, username, user_id, duration, kick_date) VALUES (%s, %s, %s, %s, %s)"),
+            (name, username, user_id, subscription_length, kick_date))
+
 
     conn.commit()
     close_connection(conn)
@@ -93,6 +130,66 @@ def get_latest_invoice_id():
     # Return the maximum invoice_id if it exists, else return 0
     return result[0] if result[0] is not None else 0
 
+def get_users_to_kick():
+    conn = create_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT user_id FROM vip WHERE kick_date <= NOW()"
+    )
+
+    # Fetch all the rows
+    rows = cur.fetchall()
+
+    # Close communication with the database
+    cur.close()
+    conn.close()
+
+    return [row[0] for row in rows]
+
+
+def get_subscription_duration(user_id):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    # Execute a query
+    cur.execute(
+        "SELECT duration FROM vip WHERE user_id = %s", (user_id,)
+    )
+
+    # Fetch the first row
+    row = cur.fetchone()
+
+    # Close communication with the database
+    cur.close()
+    conn.close()
+
+    if row:
+        # If a row was found, return the duration
+        return row[0]
+    else:
+        # If no row was found, return None
+        return None
+
+def get_invite_link(user_id):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    # Execute a query
+    cur.execute(
+        "SELECT link FROM vip WHERE user_id = %s", (user_id,)
+    )
+
+    result = cur.fetchone()
+
+    close_connection(conn)
+
+    if result is not None:
+        return result[0]  # Return the amount
+    else:
+        return None  # or some default value
+
+
 
 def check_invoice_id(invoice_id):
     conn = create_connection()
@@ -111,8 +208,6 @@ def check_invoice_id(invoice_id):
         return True  # The invoice_id exists in the database
 
 
-
-
 def add_customer_details():
     conn = create_connection()
     cur = conn.cursor()
@@ -124,14 +219,19 @@ def add_customer_details():
     
     return result is not None
 
-def update_customer_details(invoice_id, name, username, user_id):
+def get_kickdate(user_id):
     conn = create_connection()
-    cur = conn.cursor()
 
-    cur.execute(sql.SQL("UPDATE invoices SET name=%s, username=%s, user_id=%s WHERE invoice_id=%s"), (name, username, user_id, invoice_id))
+    cur = conn.cursor()
     
-    conn.commit()
-    close_connection(conn)
+    cur.execute("SELECT kick_date FROM vip WHERE user_id = %s", (user_id,))
+    result = cur.fetchone()
+
+    if result is not None:
+        return result[0]
+    else:
+        return None
+
 
 def update_invoice_date(invoice_id):
     conn = create_connection()
@@ -162,39 +262,6 @@ def get_invoice_amount(invoice_id):
         return None  # or some default value
 
 
-def get_invoice_details(invoice_id):
-    conn = create_connection()
-    cur = conn.cursor()
-
-    cur.execute(sql.SQL('SELECT user_id, invoice_id, amount, product, name FROM invoices WHERE invoice_id=%s'), (invoice_id,))
-    result = cur.fetchone()
-
-    # Add logging to inspect result.
-    logger.error(f"Result from database query: {result}")
-
-    close_connection(conn)
-    
-    if result is None:
-        logger.error(f"No result found for invoice_id {invoice_id}")  # <-- Add this line
-        return None
-    else:
-        # Return a dictionary for easier access
-        invoice_details = {
-            "user_id": result[0],
-            "invoice_id": result[1],
-            "amount": result[2],
-            "product": result[3],
-            "name": result[4]
-        }
-        logger.error(f"Returning invoice details: {invoice_details}")  # <-- Add this line
-        return invoice_details
-
-
-
-
-
-
-
 def get_last_invoice_id_for_user(user_id):
     conn = create_connection()
     cur = conn.cursor()
@@ -214,7 +281,7 @@ def get_invoice_details(invoice_id):
     conn = create_connection()
     cur = conn.cursor()
 
-    cur.execute(sql.SQL('SELECT user_id, invoice_id, amount, product, name FROM invoices WHERE invoice_id=%s'), (invoice_id,))
+    cur.execute(sql.SQL('SELECT user_id, invoice_id, amount, product, name, username, subscription_length FROM invoices WHERE invoice_id=%s'), (invoice_id,))
     result = cur.fetchone()
 
     close_connection(conn)
@@ -228,12 +295,24 @@ def get_invoice_details(invoice_id):
             "invoice_id": result[1],
             "amount": result[2],
             "product": result[3],
-            "name": result[4]
+            "name": result[4],
+            "username": result[5],
+            "subscription_length": result[6]
         }
 
         logger.info("Fetched invoice details: %s", invoice_details)
         return invoice_details
+        
 
+def update_vip_status(user_id):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    # Update status
+    cur.execute("UPDATE vip SET paid = true WHERE user_id = %s", (user_id,))
+
+    conn.commit()
+    close_connection(conn)
 
 
 
@@ -327,8 +406,6 @@ def generate_clients_book_report(start_date, end_date):
         return None
 
 
-
-
 def add_screenshot_id(invoice_id, message_id):
     conn = create_connection()
 
@@ -383,6 +460,29 @@ def get_invoice_status(invoice_id):
         return result[0]
     else:
         return None
+
+def get_invoice_by_invite_link(invite_link):
+    try:
+        conn = create_connection()
+        cur = conn.cursor()
+        
+        query = """
+        SELECT * FROM invoices
+        WHERE invite_link = %s;
+        """
+    
+        cur.execute(query, (invite_link,))
+
+        result = cur.fetchone()
+ 
+        cur.close()
+        conn.close()
+     
+        return result
+    except Exception as e:
+        print(f"Error getting invoice by invite link: {e}")
+        return None
+
 
 def get_total_income(start_date, end_date):
     conn = create_connection()
@@ -499,6 +599,78 @@ def get_current_card_and_bank():
     else:
         return None, None  # Return None if there is no current card
 
+
+def check_vip_user(user_id):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM vip WHERE user_id = %s", (user_id,))
+    result = cur.fetchone()[0]
+
+    close_connection(conn)
+    
+    return result > 0  # Returns True if user is in vip table, False otherwise
+
+def update_vip_subscription(user_id, subscription_length):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    # Get current date in the UTC timezone
+    current_date = datetime.now(pytz.timezone('Europe/Moscow'))
+
+    # Check if user is already in the table
+    cur.execute(sql.SQL("SELECT duration, kick_date, renewal_times FROM vip WHERE user_id = %s"), (user_id,))
+
+    row = cur.fetchone()
+
+    if row is None:  # If the user is not in the table yet, return False
+        return False
+
+    current_duration, current_kick_date, current_renewal_times = row[0], row[1], row[2]
+
+    # If the current_kick_date is in the future, use it as the starting point
+    if current_kick_date > current_date:
+        base_date = current_kick_date
+    else:  # Otherwise, use the current date as the starting point
+        base_date = current_date
+
+    # Calculate new duration, kick_date and renewal times
+    updated_duration = current_duration + subscription_length
+    updated_kick_date = base_date + timedelta(days=subscription_length)
+    updated_renewal_times = current_renewal_times + 1  # Increment renewal times
+
+    # Update the vip table
+    cur.execute(sql.SQL("""
+        UPDATE vip 
+        SET duration = %s, kick_date = %s, renewal_times = %s
+        WHERE user_id = %s
+        """), (updated_duration, updated_kick_date, updated_renewal_times, user_id))
+
+    conn.commit()
+    close_connection(conn)
+    
+    return True  # If the user's subscription was successfully updated, return True
+
+
+def get_vip_subscription(user_id):
+    conn = create_connection()
+    cur = conn.cursor()
+
+    # Fetch user's subscription details
+    cur.execute(sql.SQL("SELECT kick_date, renewal_times FROM vip WHERE user_id = %s"), (user_id,))
+
+    row = cur.fetchone()
+
+    if row is None:  # If the user is not in the table yet, return None
+        return None
+
+    kick_date, renewal_times = row[0], row[1]
+
+    # Close the connection
+    close_connection(conn)
+
+    # Return subscription details
+    return {'kick_date': kick_date, 'renewal_times': renewal_times}
 
 
 
@@ -664,4 +836,3 @@ def delete_salesman(salesman_name):
     # Save (commit) the changes and close the connection
     conn.commit()
     close_connection(conn)
-
