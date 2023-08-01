@@ -4,6 +4,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputTextMessageContent, InlineQueryResultArticle
 from telegram.ext import CallbackContext, CallbackQueryHandler, InlineQueryHandler, MessageHandler, Filters
 import config
+from datetime import datetime
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -13,7 +14,6 @@ logger = logging.getLogger(__name__)
 def invoice(update: Update, context: CallbackContext) -> None:
     user_id = update.inline_query.from_user.id
     if user_id not in config.SALES_MANAGERS:
-        # This user is not allowed to issue invoices
         logging.info(f"User {user_id} tried to issue an invoice but is not in the list of sales managers.")
         return
 
@@ -22,40 +22,63 @@ def invoice(update: Update, context: CallbackContext) -> None:
     # Log the received query
     logger.info(f'Received inline query: {query}')
 
-    # Ignore empty queries or queries without amount
-    if not query or not query[0].isdigit():
-        return
+    if len(query) >= 2 and query[0].isdigit() and query[1].isdigit():
+        # Handle VIP invoices
+        amount = int(query[0])
+        days = int(query[1])
 
-    amount = int(query[0])
-
-    products = ['Vip', 'Express', 'Ordinar', 'Combo', 'Lesenka']
-
-    results = []
-
-    # Fetch current salesman from the database
-    current_salesman = database.get_current_salesman()
-
-    for product in products:
-        # Log the extracted amount and product
-        logger.info(f'Creating invoice for amount: {amount}, product: {product}')
-
-        pay_url = f"{config.BOT_URL}?start=amount_{amount}_product_{product}"
-
-        results.append(InlineQueryResultArticle(
-            id=str(uuid.uuid4()),  # Generate a random ID for this result
-            title=f"Создать счет • {amount} рублей",
-            description=f"Продукт: {product} | Продажник: {current_salesman}",  
-            input_message_content=InputTextMessageContent(f"""🧾 К оплате: {amount} рублей.
-
-Для оплаты, жми кнопку внизу ⬇️ """),
+        # Log the extracted amount and subscription length
+        logger.info(f'Creating VIP invoice for amount: {amount}, subscription length: {days} days')
+        
+        pay_url = f"{config.BOT_URL}?start=vip_{amount}_days_{days}"
+        current_salesman = database.get_current_salesman()
+        
+        results = [InlineQueryResultArticle(
+            id=str(uuid.uuid4()),
+            title=f"Вип-чат • {amount} рублей",
+            description=f"Длительность подписки: {days} дней | Продажник: {current_salesman}",
+            input_message_content=InputTextMessageContent(config.INVOICE_TEXT_VIP.format(amount=amount,days=days)),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💳 Оплатить", url=pay_url)]
+                [InlineKeyboardButton(config.INVOICE_PAY_BUTTON, url=pay_url)]
             ]),
-            thumb_url="https://cdn-icons-png.flaticon.com/512/1117/1117142.png",  # Replace this with your actual image URL
-        ))
+            thumb_url="https://cdn-icons-png.flaticon.com/512/2982/2982899.png",
+        )]
+    else:
+        # Handle regular invoices
+        if not query or not query[0].isdigit():
+            return
+
+        amount = int(query[0])
+
+        products = ['Express', 'Ordinar', 'Combo', 'Lesenka']
+
+        results = []
+
+        # Fetch current salesman from the database
+        current_salesman = database.get_current_salesman()
+
+        for product in products:
+            # Log the extracted amount and product
+            logger.info(f'Creating invoice for amount: {amount}, product: {product}')
+
+            pay_url = f"{config.BOT_URL}?start=amount_{amount}_product_{product}"
+
+            results.append(InlineQueryResultArticle(
+                id=str(uuid.uuid4()),
+                title=f"Создать счет • {amount} рублей",
+                description=f"Продукт: {product} | Продажник: {current_salesman}",  
+                input_message_content=InputTextMessageContent(config.INVOICE_TEXT.format(amount=amount)),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(config.INVOICE_PAY_BUTTON, url=pay_url)]
+                ]),
+                thumb_url="https://cdn-icons-png.flaticon.com/512/1117/1117142.png",
+            ))
 
     # Send all results
     context.bot.answer_inline_query(update.inline_query.id, results, cache_time=0)
+
+
+
 
 def handle_payment(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -65,16 +88,16 @@ def handle_payment(update: Update, context: CallbackContext) -> None:
 
     # Check the invoice status in the database
     invoice_status = database.get_invoice_status(invoice_id)
+    logger.info(f'Invoice status: {invoice_status}')
 
     if invoice_status == 'PAID' or invoice_status == 'DECLINED':
         # This invoice has already been paid, return a message to the user
         query.edit_message_text(text="Этот счет больше не действителен.")
     else:
         # The invoice is not paid, proceed with the payment process
-        query.edit_message_text(text="""📎🧾 Для проверки, отправьте скриншот перевода.
-        """,
+        query.edit_message_text(text=config.ASK_SCREEN_TEXT,
                                 reply_markup=InlineKeyboardMarkup([
-                                    [InlineKeyboardButton("🔙 К реквизитам", callback_data='go_back')]
+                                    [InlineKeyboardButton(config.GO_BACK_TEXT, callback_data='go_back')]
                                 ]))
 
 
@@ -85,23 +108,11 @@ def go_back(update: Update, context: CallbackContext) -> None:
     amount = context.chat_data.get('amount')
     card_number, bank = database.get_current_card_and_bank()
     
-    query.edit_message_text(text=f"""
-🧾 Новый счет. К оплате: {amount} рублей.  
-
-Для оплаты, переведите деньги на карту банка РФ
-
-👉🏻 Реквизиты карты:
-{bank} {card_number}
-
-Перевели деньги? Нажмите на кнопку Я оплатил внизу 👇 
-
-Если не получилось или есть вопросы, нажми на кнопку 👨🏻‍💼 Помощь. """,
+    query.edit_message_text(text=config.PAYMENT_MESSAGE.format(amount=amount, bank=bank, card_number=card_number),
                             reply_markup=InlineKeyboardMarkup([
-                                [InlineKeyboardButton("✅ Я оплатил", callback_data='i_paid'),
-                                 InlineKeyboardButton("👨🏻‍💼 Помощь", url=config.MANAGER_URL)]
+                                [InlineKeyboardButton(config.I_PAID_TEXT, callback_data='i_paid'),
+                                 InlineKeyboardButton(config.CONTACT_MANAGER_TEXT, url=config.MANAGER_URL)]
                             ]))
-
-
 
 
 def handle_screenshot(update: Update, context: CallbackContext) -> None:
@@ -170,9 +181,7 @@ def handle_screenshot(update: Update, context: CallbackContext) -> None:
 
                 logger.info(f"Sent invoice details to payment manager: id={manager_id}")
 
-            context.bot.send_message(chat_id=update.effective_chat.id, text=""" Скрин получен. 
-            
-        🔎 Проверяем.""")
+            context.bot.send_message(chat_id=update.effective_chat.id, text=config.CHECK_SCREEN_TEXT)
 
             logger.info(f"Sent thank you message to user: id={user_id}")
         else:
@@ -200,8 +209,15 @@ def approve_invoice(update: Update, context: CallbackContext) -> None:
                 query.edit_message_text(text=f"⚠️ Выберите тип продажи. ⚠️", reply_markup=keyboard)
     except Exception as e:
         logger.error(f"An error occurred in approve_invoice: {e}")
-
         
+def generate_vip_invite_link(context: CallbackContext):
+    chat_id = config.GROUP_ID  # replace with your VIP chat ID
+    try:
+        invite_link = context.bot.create_chat_invite_link(chat_id,member_limit=1)
+        return invite_link.invite_link  # return the actual URL
+    except Exception as e:
+        print(f"Failed to export invite link for VIP chat: {e}")
+        return None
 
 
 
@@ -222,11 +238,42 @@ def set_invoice_type_outgoing(update: Update, context: CallbackContext) -> None:
     user_id = invoice_details["user_id"]
     amount = invoice_details["amount"]
     name = invoice_details["name"]
-    msg = f""" 👊🏼 Скриншот прошел проверку! 
+    username = invoice_details["username"]
+    subscription_length = invoice_details["subscription_length"]
 
-👇🏻 Нажмите кнопку внизу и забирай свой прогноз!"""
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("👉🏻 Забрать прогноз", url=config.MANAGER_URL)]])
+    # Update the user's subscription
+   
+    subscription_updated = False
+    if subscription_length is not None:
+        subscription_updated = database.update_vip_subscription(user_id, subscription_length)
+
+    if not subscription_updated:
+        # If the user is not in the vip table yet, add them
+        invite_link = generate_vip_invite_link(context)
+        if invite_link is None:
+            # Handle the error if the invite link could not be generated
+            return
+        if subscription_length is not None: # add this check here also if needed
+            database.add_subscription(name, username, user_id, subscription_length)
+
+    kick_date = database.get_kickdate(user_id)
+    kick_date = kick_date.strftime("%d.%m.%Y")
+
+    invite_link = generate_vip_invite_link(context)
+    if invite_link is None:
+        # Handle the error if the invite link could not be generated
+        return
+
+    # Determine which message to send based on product type
+    if subscription_length is not None: 
+        msg = config.VIP_INVITE_TEXT.format(kick_date=kick_date)
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Вступить в Вип-чат", url=invite_link)]])
+    else:
+        msg = config.DEAL_DONE_TEXT.format(amount=amount)
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(config.GET_SERVICE_TEXT, url=config.MANAGER_URL)]])
+        
     context.bot.send_message(chat_id=user_id, text=msg, reply_markup=keyboard)
+    database.update_vip_status(user_id)
 
     # Get the screenshot info from the database
     screenshot_id = database.get_screenshot_id(invoice_id)
@@ -252,7 +299,7 @@ def set_invoice_type_incoming(update: Update, context: CallbackContext) -> None:
     database.update_invoice_status(invoice_id, 'PAID')
     database.update_invoice_type(invoice_id, 'Incoming')  # Assuming you have this function defined
     query.edit_message_text(text=f"""✅ Счет {invoice_id} был подтвержден!
-    
+
 Тип продажи: 📥 Входящий.""")
 
     invoice_details = database.get_invoice_details(invoice_id)
@@ -263,11 +310,40 @@ def set_invoice_type_incoming(update: Update, context: CallbackContext) -> None:
     user_id = invoice_details["user_id"]
     amount = invoice_details["amount"]
     name = invoice_details["name"]
-    msg = f""" 👊🏼 Скриншот прошел проверку! 
+    username = invoice_details["username"]
+    subscription_length = invoice_details["subscription_length"]
 
-👇🏻 Нажмите кнопку внизу и забирай свой прогноз!"""
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("👉🏻 Забрать прогноз", url=config.MANAGER_URL)]])
+    subscription_updated = False
+    if subscription_length is not None:
+        subscription_updated = database.update_vip_subscription(user_id, subscription_length)
+
+    if not subscription_updated:
+        # If the user is not in the vip table yet, add them
+        invite_link = generate_vip_invite_link(context)
+        if invite_link is None:
+            # Handle the error if the invite link could not be generated
+            return
+        if subscription_length is not None: # add this check here also if needed
+            database.add_subscription(name, username, user_id, subscription_length)
+
+    kick_date = database.get_kickdate(user_id)
+    kick_date = kick_date.strftime("%d.%m.%Y")
+
+    invite_link = generate_vip_invite_link(context)
+    if invite_link is None:
+        # Handle the error if the invite link could not be generated
+        return
+
+    # Determine which message to send based on product type
+    if subscription_length is not None: 
+        msg = config.VIP_INVITE_TEXT.format(kick_date=kick_date)
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Вступить в Вип-чат", url=invite_link)]])
+    else:
+        msg = config.DEAL_DONE_TEXT.format(amount=amount)
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(config.GET_SERVICE_TEXT, url=config.MANAGER_URL)]])
+
     context.bot.send_message(chat_id=user_id, text=msg, reply_markup=keyboard)
+    database.update_vip_status(user_id)
 
     # Get the screenshot info from the database
     screenshot_id = database.get_screenshot_id(invoice_id)
@@ -279,12 +355,14 @@ def set_invoice_type_incoming(update: Update, context: CallbackContext) -> None:
 
             # Send the message to the payment manager
             context.bot.send_message(chat_id=manager_id, text=f"""🆕 Новый перевод на сумму {amount} рублей.
-    💳: {database.get_current_card_and_bank()} 
+💳: {database.get_current_card_and_bank()} 
 
-    Счет №: {invoice_id}
-    Клиент: {name}
-    User ID: {from_chat_id}
-            """)
+Счет №: {invoice_id}
+Клиент: {name}
+User ID: {from_chat_id}
+""")
+
+
 
 
 
@@ -302,8 +380,8 @@ def decline_invoice(update: Update, context: CallbackContext) -> None:
         database.update_invoice_status(invoice_id, 'DECLINED')
         invoice_details = database.get_invoice_details(invoice_id)
         user_id = invoice_details["user_id"]
-        msg = f"🚫 Бро, что-то пошло не так. Скриншот не прошел проверку. Если ты думаешь, что произошла ошибка, напиши нам."
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Произошла ошибка", url=config.MANAGER_URL)]])
+        msg = config.SCREEN_DECLINED_TEXT
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(config.CONTACT_MANAGER_TEXT, url=config.MANAGER_URL)]])
         context.bot.send_message(chat_id=user_id, text=msg, reply_markup=keyboard)
         query.edit_message_text(text=f"Счет {invoice_id} был отклонен.")  # This will update the confirmation message to the decline message
 
@@ -313,9 +391,6 @@ def decline_invoice(update: Update, context: CallbackContext) -> None:
 def do_nothing(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
-
-
-
 
 
 
