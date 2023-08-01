@@ -1,20 +1,21 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputTextMessageContent, InlineQueryResultArticle, ReplyKeyboardMarkup, ReplyKeyboardRemove, ParseMode
-from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters, InlineQueryHandler, CallbackQueryHandler, ConversationHandler
-from cashier import invoice, handle_payment, go_back, handle_screenshot, approve_invoice, decline_invoice, do_nothing, set_invoice_type_outgoing, set_invoice_type_incoming
+from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters, InlineQueryHandler, CallbackQueryHandler, ConversationHandler, ChatMemberHandler
+from cashier import invoice, handle_payment, go_back, handle_screenshot, approve_invoice, decline_invoice, do_nothing, set_invoice_type_outgoing, set_invoice_type_incoming, generate_vip_invite_link
 from reports import reports, sales_book_report, clients_book_report, input_date, generate_sales_report, generate_clients_report, set_today, set_yesterday, set_this_month, set_this_week,  set_30_days, set_custom_period, START, INPUT_DATE, GENERATE_SALES_BOOK_REPORT, GENERATE_CLIENTS_BOOK_REPORT
-from settings import conv_handler_payments, conv_handler_salesman, manage_salesman
-from config import PAYMENT_MANAGERS, SALES_MANAGERS, ANALYTICS, BOT_TOKEN, MANAGER_URL, get_card_number, set_card_number
+from settings import conv_handler_payments_and_salesman, manage_salesman
+from config import PAYMENT_MANAGERS, SALES_MANAGERS, ANALYTICS, BOT_TOKEN, MANAGER_URL, PAYMENT_MESSAGE, VIP_PAYMENT_MESSAGE, I_PAID_TEXT, CONTACT_MANAGER_TEXT, BOT_CANCEL_TEXT, GROUP_ID, MY_VIP_TEXT, get_card_number, set_card_number
+from apscheduler.schedulers.background import BackgroundScheduler
 import re
 import traceback
 import uuid
 import random
 import database
 import logging
-import datetime
+from datetime import datetime
 import json
 import html
+from pytz import timezone
 
-# Set up logging at the top of your file
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -25,20 +26,26 @@ main_menu_options = [
     ['Manage Salesman']
 ]
 
+
 def get_payment_message(amount):
     card_number, bank = database.get_current_card_and_bank()
     
-    return f"""
-    🧾 Новый счет. К оплате: {amount} рублей.  
+    return PAYMENT_MESSAGE.format(amount=amount, bank=bank, card_number=card_number)
 
-Для оплаты, переведите деньги на карту банка РФ
+def get_vip_payment_message(amount, subscription_length):
+    card_number, bank = database.get_current_card_and_bank()
+    
+    return VIP_PAYMENT_MESSAGE.format(amount=amount, subscription_length=subscription_length, bank=bank, card_number=card_number)
 
-👉🏻 Реквизиты карты:
-{bank} {card_number}
+def generate_invoice_id():
+    invoice_id = int(database.get_latest_invoice_id()) + 1
+    while database.check_invoice_id(invoice_id):
+        invoice_id += 1
 
-Перевели деньги? Нажмите на кнопку Я оплатил внизу 👇 
+    # Log created invoice_id
+    logger.info(f'Generated unique invoice_id={invoice_id}')
 
-Если не получилось или есть вопросы, нажми на кнопку 👨🏻 Помощь. """
+    return invoice_id
 
 
 
@@ -48,7 +55,6 @@ def start(update: Update, context: CallbackContext) -> None:
     username = user.username or None
     user_id = user.id
 
-    # Log user details
     logger.info(f'Start command received from user: id={user_id}, name={name}, username={username}')
 
     # Extract the amount and product from the text of the message
@@ -59,9 +65,11 @@ def start(update: Update, context: CallbackContext) -> None:
     if user_id in PAYMENT_MANAGERS or user_id in SALES_MANAGERS or user_id in ANALYTICS:
         handle_manager_start_command(update)
     
-    elif start_data and len(start_data) == expected_data_len and start_data[0] == 'amount' and start_data[2] == 'product':
-        handle_payment_start_command(start_data, user_id, name, username, update, context)
-
+    elif start_data and len(start_data) == expected_data_len:
+        if start_data[0] == 'amount' and start_data[2] == 'product':
+            handle_payment_start_command(start_data, user_id, name, username, update, context)
+        elif start_data[0] == 'vip':
+            handle_vip_payment_start_command(start_data, user_id, name, username, update, context)
     else:
         update.message.reply_text('Hi!')
 
@@ -87,16 +95,10 @@ def handle_payment_start_command(start_data, user_id, name, username, update, co
     invoice_id = generate_invoice_id()
 
     # Store new invoice in the db
-    database.add_invoice(invoice_id, amount, product, user_id, name, current_salesman)
+    database.add_invoice(invoice_id, amount, product, user_id, name, username, current_salesman)
 
     # Saving invoice_id in context.chat_data
     context.chat_data['invoice_id'] = invoice_id
-
-    # Add the customer details to the database
-    database.update_customer_details(invoice_id, name, username, user_id)
-
-    # Update the Date column in the invoice
-    database.update_invoice_date(invoice_id)
 
     # Log success of database operations
     logger.info(f'Added new invoice and updated customer details in database for invoice_id={invoice_id}, user_id={user_id}')
@@ -110,8 +112,12 @@ def handle_payment_start_command(start_data, user_id, name, username, update, co
     context.chat_data['_CARD_NUMBER'] = card_number
 
     # Creating InlineKeyboardMarkup
-    keyboard = [[InlineKeyboardButton("✅ Я оплатил", callback_data='i_paid'),
-                 InlineKeyboardButton("👨🏻 Помощь", url=MANAGER_URL)]]  # Replace with the actual username of the sales manager
+    keyboard = [
+        [
+            InlineKeyboardButton(I_PAID_TEXT, callback_data='i_paid'),
+            InlineKeyboardButton(CONTACT_MANAGER_TEXT, url=MANAGER_URL)
+        ]
+    ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -122,21 +128,74 @@ def handle_payment_start_command(start_data, user_id, name, username, update, co
     logger.info(f'Sent payment message to user_id={user_id} with invoice_id={invoice_id}, amount={amount}, product={product}')
 
 
-def generate_invoice_id():
-    invoice_id = int(database.get_latest_invoice_id()) + 1
-    while database.check_invoice_id(invoice_id):
-        invoice_id += 1
+def handle_vip_payment_start_command(start_data, user_id, name, username, update, context):
 
-    # Log created invoice_id
-    logger.info(f'Generated unique invoice_id={invoice_id}')
+    # Parse amount and subscription length
+    amount = int(start_data[1])
+    subscription_length = int(start_data[3])
+    current_salesman = database.get_current_salesman()
 
-    return invoice_id
+    invoice_id = generate_invoice_id()
+
+    database.add_invoice(invoice_id, amount, 'VIP', user_id, name, username, current_salesman, subscription_length) 
+    logger.info(f'Invoice info added')
+    
+    logger.info(f'Added new invoice in database for invoice_id={invoice_id}, user_id={user_id}')
+
+    payment_message = get_vip_payment_message(amount, subscription_length)
+    card_number = database.get_current_card_and_bank()
+
+    # Store the amount and card number as context attributes
+    context.chat_data['amount'] = amount
+    context.chat_data['_CARD_NUMBER'] = card_number
+
+    # Creating InlineKeyboardMarkup
+    keyboard = [
+        [
+            InlineKeyboardButton(I_PAID_TEXT, callback_data='i_paid'),
+            InlineKeyboardButton(CONTACT_MANAGER_TEXT, url=MANAGER_URL)
+        ]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Send the message with InlineKeyboardMarkup
+    update.message.reply_text(payment_message, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+
+    # Log sent payment message
+    logger.info(f"Sent payment message to user_id={user_id} with invoice_id={invoice_id}, amount={amount}, product='VIP'")
+
+def get_remaining_days(kick_date):
+    now = datetime.now(timezone('Europe/Moscow'))
+    remaining_days = (kick_date - now).days
+    return remaining_days
+
+
+def handle_myvip_command(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+
+    # Fetch the user's subscription details
+    subscription_details = database.get_vip_subscription(user_id)
+
+    # If the user is not subscribed
+    if subscription_details is None:
+        message = "❌ У вас нет активной подписки на Вип-Чат. "
+    else:
+        kick_date = subscription_details['kick_date']
+        remaining_days = get_remaining_days(kick_date)
+        renewal_times = subscription_details['renewal_times']
+        formatted_kick_date = kick_date.strftime('%d.%m.%Y')
+        
+        message = MY_VIP_TEXT.format(formatted_kick_date, remaining_days, renewal_times)
+
+    context.bot.send_message(chat_id=user_id, text=message)
+
 
 
 def cancel(update: Update, context: CallbackContext) -> int:
     user = update.effective_user
     logger.info(f"User {user.id} canceled the conversation.")
-    update.message.reply_text('Действие было отменено.', reply_markup=ReplyKeyboardRemove())
+    update.message.reply_text(BOT_CANCEL_TEXT, reply_markup=ReplyKeyboardRemove())
 
     return ConversationHandler.END
 
@@ -166,14 +225,34 @@ def error_callback(update: Update, context: CallbackContext) -> None:
     # Finally, send the message
     context.bot.send_message(chat_id=56424449, text=message, parse_mode=ParseMode.HTML)
 
+def kick_users(context: CallbackContext):
+    user_ids = database.get_users_to_kick()
+    message = f"""⌛️ Ваша подписка на Вип-чат закончилась. 
+    
+    Чтобы продлить подписку, напишите нам!"""
+    keyboard = [
+        [
+            InlineKeyboardButton('Продлить подписку', url=MANAGER_URL)
+        ]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    for user_id in user_ids:
+        try:
+            context.bot.unban_chat_member(chat_id=GROUP_ID, user_id=user_id)
+            context.bot.send_message(chat_id=user_id, text=message, reply_markup=reply_markup)
+        except Exception as e:
+            logger.info(f"Could not kick user {user_id}: {e}")
+
 
 def main() -> None:
     # You should replace 'YOUR BOT TOKEN' with your actual token
     updater = Updater(BOT_TOKEN, use_context=True) 
 
     dispatcher = updater.dispatcher
-    dispatcher.add_handler(conv_handler_salesman)
-    dispatcher.add_handler(conv_handler_payments)
+    dispatcher.add_handler(conv_handler_payments_and_salesman)
+
 
     conv_handler = ConversationHandler(
     entry_points=[
@@ -197,17 +276,11 @@ def main() -> None:
         GENERATE_SALES_BOOK_REPORT: [MessageHandler(Filters.text & ~Filters.command, generate_sales_report)],
         GENERATE_CLIENTS_BOOK_REPORT: [MessageHandler(Filters.text & ~Filters.command, generate_clients_report)],
     },
-    fallbacks=[CommandHandler('cancel', cancel)],
+    fallbacks=[CommandHandler('cancel', cancel), MessageHandler(Filters.all, lambda u, c: ConversationHandler.END)],
 )
 
 
-
-
     dispatcher.add_handler(conv_handler)
-
-
-    logger.info(f"Handlers: {dispatcher.handlers}")
-
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(InlineQueryHandler(invoice))
     dispatcher.add_handler(MessageHandler(Filters.photo, handle_screenshot))
@@ -219,12 +292,16 @@ def main() -> None:
     dispatcher.add_handler(MessageHandler(Filters.photo | Filters.document, handle_screenshot))
     dispatcher.add_handler(CallbackQueryHandler(set_invoice_type_outgoing, pattern='outgoing'))
     dispatcher.add_handler(CallbackQueryHandler(set_invoice_type_incoming, pattern='incoming'))
+    dispatcher.add_handler(CommandHandler('myvip', handle_myvip_command))
 
-    
-
+ 
 
 
     dispatcher.add_error_handler(error_callback)
+
+    scheduler = BackgroundScheduler(timezone=timezone('Europe/Moscow'))  # Adjust 'UTC' if needed
+    scheduler.add_job(kick_users, 'cron', hour=0, minute=0, second=0, args=(updater,))
+    scheduler.start()
 
     updater.start_polling()
 
@@ -233,5 +310,3 @@ def main() -> None:
 if __name__ == '__main__':
     database.create_table()
     main()
-
-
