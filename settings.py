@@ -4,12 +4,12 @@ import config
 import database
 import re
 
-MANAGE_PAYMENTS, CHOOSE_EDIT, ADD_CARD_NUMBER, ADD_CARD_BANK, CONFIRM_ADD_CARD, DELETE_CARD, CONFIRM_DELETE_CARD = range(2, 9)
-MANAGE_SALESMAN, CHOOSE_EDIT_SALESMAN, ADD_SALESMAN, CONFIRM_ADD_SALESMAN, DELETE_SALESMAN = range(10, 15)
-
+MANAGE_PAYMENTS, CHOOSE_EDIT, ADD_CARD_NUMBER, ADD_CARD_BANK, CONFIRM_ADD_CARD, DELETE_CARD, CONFIRM_DELETE_CARD, \
+MANAGE_SALESMAN, CHOOSE_EDIT_SALESMAN, ADD_SALESMAN, CONFIRM_ADD_SALESMAN, DELETE_SALESMAN = range(2, 14)
 
 
 def manage_payments(update: Update, context: CallbackContext):
+    end_current_conversation(context)
     user_id = update.message.from_user.id
     if user_id in config.PAYMENT_MANAGERS:
         # Get all card numbers from the database
@@ -33,10 +33,11 @@ def manage_payments(update: Update, context: CallbackContext):
 """,
             reply_markup=InlineKeyboardMarkup(buttons + [[InlineKeyboardButton('📝 Редактировать карты', callback_data='edit_cards')]])
         )
+        context.user_data['current_state'] = MANAGE_PAYMENTS
+        return MANAGE_PAYMENTS
     else:
-        update.message.reply_text("❌ У вас нет необходимых прав доступа.")
-    return MANAGE_PAYMENTS
-
+        update.message.reply_text("❌ You don't have the necessary permissions.")
+        return ConversationHandler.END
 
 
 def edit_card(update: Update, context: CallbackContext):
@@ -167,48 +168,10 @@ def delete_card(update: Update, context: CallbackContext):
     return ConversationHandler.END
 
 
-
-
-conv_handler_payments = ConversationHandler(
-    entry_points=[MessageHandler(Filters.regex('^Manage payments$'), manage_payments)],
-    states={
-        MANAGE_PAYMENTS: [
-            CallbackQueryHandler(edit_card, pattern='^choose_'),
-            CallbackQueryHandler(choose_edit, pattern='^edit_cards$'),
-            CallbackQueryHandler(cancel_manage_payments, pattern='^cancel$')
-        ],
-
-
-        CHOOSE_EDIT: [
-            CallbackQueryHandler(add_card_number, pattern='add_card'),
-            CallbackQueryHandler(choose_card_to_delete, pattern='delete_card')
-        ],
-        ADD_CARD_NUMBER: [
-            MessageHandler(Filters.text & ~Filters.command, add_card_bank)
-        ],
-        ADD_CARD_BANK: [
-            MessageHandler(Filters.text & ~Filters.command, confirm_add_card)
-        ],
-        CONFIRM_ADD_CARD: [
-            CallbackQueryHandler(confirm_add_card_yes, pattern='yes_add'),
-            CallbackQueryHandler(confirm_add_card_no, pattern='no_add')    
-        ],
-        DELETE_CARD: [
-            CallbackQueryHandler(delete_card, pattern='^delete_'),
-        ],
-
-        SET_CURRENT_CARD: [
-            CallbackQueryHandler(set_current_card_yes, pattern='^yes_set_current$'),
-            CallbackQueryHandler(set_current_card_no, pattern='^no_set_current$'),
-        ],
-    },
-    fallbacks=[CallbackQueryHandler(cancel_manage_payments)]
-)
-
-
 def manage_salesman(update: Update, context: CallbackContext):
+    end_current_conversation(context)
     user_id = update.message.from_user.id
-    if user_id in config.SALES_MANAGERS:  # assuming that you have SALES_MANAGERS defined in your config
+    if user_id in config.SALES_MANAGERS: 
         salesmen = database.get_all_salesmen()
 
         buttons = [[InlineKeyboardButton(salesman, callback_data=f"choose_{salesman}")] for salesman in salesmen]
@@ -223,9 +186,12 @@ def manage_salesman(update: Update, context: CallbackContext):
 """,
             reply_markup=InlineKeyboardMarkup(buttons + [[InlineKeyboardButton('📝 Изменить список продажников', callback_data='edit_salesmen')]])
         )
+        context.user_data['current_state'] = MANAGE_SALESMAN
+        return MANAGE_SALESMAN
     else:
-        update.message.reply_text("❌ You don't have the necessary permissions.")
-    return MANAGE_SALESMAN
+        update.message.reply_text("❌ У вас нет необходимого доступа. Выберите другое действие.")
+        return ConversationHandler.END
+
 
 def edit_salesman(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -300,9 +266,49 @@ def delete_salesman(update: Update, context: CallbackContext):
     query.edit_message_text(f"🚮 Продажник {salesman} был удален из списка.")
     return ConversationHandler.END
 
-conv_handler_salesman = ConversationHandler(
-    entry_points=[MessageHandler(Filters.regex('^Manage Salesman$'), manage_salesman)],
+def end_current_conversation(context: CallbackContext):
+    if 'current_state' in context.user_data:
+        current_state = context.user_data['current_state']
+        if current_state == MANAGE_PAYMENTS:
+            context.user_data.pop('current_state', None)
+            return ConversationHandler.END
+        elif current_state == MANAGE_SALESMAN:
+            context.user_data.pop('current_state', None)
+            return ConversationHandler.END
+
+
+conv_handler_payments_and_salesman = ConversationHandler(
+    entry_points=[
+        MessageHandler(Filters.regex('^Manage payments$'), manage_payments),
+        MessageHandler(Filters.regex('^Manage Salesman$'), manage_salesman)
+    ],
     states={
+        MANAGE_PAYMENTS: [
+            CallbackQueryHandler(edit_card, pattern='^choose_'),
+            CallbackQueryHandler(choose_edit, pattern='^edit_cards$'),
+            CallbackQueryHandler(cancel_manage_payments, pattern='^cancel$')
+        ],
+        CHOOSE_EDIT: [
+            CallbackQueryHandler(add_card_number, pattern='add_card'),
+            CallbackQueryHandler(choose_card_to_delete, pattern='delete_card')
+        ],
+        ADD_CARD_NUMBER: [
+            MessageHandler(Filters.text & ~Filters.command, add_card_bank)
+        ],
+        ADD_CARD_BANK: [
+            MessageHandler(Filters.text & ~Filters.command, confirm_add_card)
+        ],
+        CONFIRM_ADD_CARD: [
+            CallbackQueryHandler(confirm_add_card_yes, pattern='yes_add'),
+            CallbackQueryHandler(confirm_add_card_no, pattern='no_add')    
+        ],
+        DELETE_CARD: [
+            CallbackQueryHandler(delete_card, pattern='^delete_'),
+        ],
+        SET_CURRENT_CARD: [
+            CallbackQueryHandler(set_current_card_yes, pattern='^yes_set_current$'),
+            CallbackQueryHandler(set_current_card_no, pattern='^no_set_current$'),
+        ],
         MANAGE_SALESMAN: [
             CallbackQueryHandler(edit_salesman, pattern='^choose_'),
             CallbackQueryHandler(choose_edit_salesman, pattern='^edit_salesmen$'),
@@ -320,6 +326,9 @@ conv_handler_salesman = ConversationHandler(
             CallbackQueryHandler(confirm_add_salesman_no, pattern='^no_add_salesman$')   
         ],
     },
-    fallbacks=[CallbackQueryHandler(cancel_manage_salesman)]
+    fallbacks=[
+        CallbackQueryHandler(cancel_manage_payments),
+        CallbackQueryHandler(cancel_manage_salesman),
+        MessageHandler(Filters.all, lambda u, c: ConversationHandler.END)
+    ]
 )
-
