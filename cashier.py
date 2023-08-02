@@ -117,6 +117,11 @@ def go_back(update: Update, context: CallbackContext) -> None:
 
 def handle_screenshot(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
+    
+    logger.info(f"user: {user}")  # Log user
+    logger.info(f"user.first_name: {user.first_name}")  # Log user.first_name
+    logger.info(f"user.last_name: {user.last_name}")  # Log user.last_name
+
     name = user.first_name + " " + user.last_name if user.last_name else user.first_name
     username = user.username
     user_id = user.id
